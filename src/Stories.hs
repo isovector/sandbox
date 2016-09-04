@@ -1,23 +1,31 @@
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Stories
      where
 
 import Control.Monad.Free
 import Control.Comonad.Cofree
+
+import Data.Singletons.TypeLits
+import Data.Singletons.CustomStar
+import Data.Singletons.Prelude
+import Data.Singletons.Prelude.Base
+import Data.Singletons.Prelude.List (Elem)
 
 data Placeholder :: * -> *
 
@@ -89,12 +97,12 @@ type instance Knotted ctr all (x ': '[]) = Tie all x
 type instance Knotted ctr all (x ': (y ': ys)) = ctr (Tie all x) (Knotted ctr all (y ': ys))
 
 -- Filters functors out of recursive calls of the fold.
-type family Filter (xs :: [* -> *]) where
+type family Filter (xs :: [* -> *]) :: [* -> *] where
     Filter '[] = '[]
     Filter (x ': xs) = Keep x xs
 
 -- Given a list of functors, return the functors in the opposite category.
-type family CoList (all :: [* -> *]) (xs :: [* -> *]) where
+type family CoList (all :: [* -> *]) (xs :: [* -> *]) :: [* -> *] where
     CoList all '[] = '[]
     CoList all (x ': xs) = Co all x ': CoList all xs
 
@@ -114,27 +122,37 @@ class HasDSL (t :: * -> *) where
     type Co (all :: [* -> *]) t :: * -> *
 
 data ChangeF a = Change Character ChangeType (ChangeResult -> a) deriving Functor
+data CoChangeF a = CoChange
+                 { changeH :: Character -> ChangeType -> (ChangeResult, a)
+                 } deriving Functor
 instance HasDSL ChangeF where
     type Co all ChangeF = CoChangeF
 
 data InterruptF k a = forall x y. Interrupt (Free k x) (Free k y) (y -> a)
-instance Functor k => Functor (InterruptF k) where
+instance Functor (InterruptF k) where
     fmap f (Interrupt x y a) = Interrupt x y (f . a)
+data CoInterruptF k a = CoInterrupt
+                      { interruptH :: forall x y. KnotStory k x -> KnotStory k y -> (y, a)
+                      }
+instance Functor (CoInterruptF k) where
+    fmap f (CoInterrupt g) = CoInterrupt $ (fmap . fmap . fmap) f g
 instance HasDSL (InterruptF k) where
     type Tie all (InterruptF k) = InterruptF (Knot Sum (Filter all))
     type Keep (InterruptF k) rest = rest
     type Co all (InterruptF k) = CoInterruptF (Filter all)
 
 data MacguffinF a = Macguffin (Desirable -> a) deriving Functor
+data CoMacguffinF a = CoMacguffin
+                    { macguffinH :: (Desirable, a)
+                    } deriving Functor
 instance HasDSL MacguffinF where
     type Co all MacguffinF = CoMacguffinF
-
-
 
 type KnotStory k = Free (Knot Sum k)
 type KnotCoStory k = Cofree (Knot Product (CoList k k))
 type Story = KnotStory '[ChangeF, InterruptF Placeholder, MacguffinF]
 type CoStory = KnotCoStory '[ChangeF, InterruptF Placeholder, MacguffinF]
+
 
 change :: (MonadFree f m, ChangeF :<: f) => Character -> ChangeType -> m ChangeResult
 change c ct = liftF . inj $ Change c ct id
@@ -147,15 +165,9 @@ magic = do
 proof :: (CoStory ~ Cofree (CoChangeF :*: CoInterruptF '[ChangeF, MacguffinF] :*: CoMacguffinF)) => ()
 proof = ()
 
+removeInterrupted :: (Elem (InterruptF Placeholder) ks ~ 'True)
+                  => KnotStory ks a
+                  -> KnotStory (Filter ks) a
+removeInterrupted = undefined
 
-
-data CoChangeF a = CoChange
-                 { changeH :: Character -> ChangeType -> (ChangeResult, a)
-                 }
-data CoInterruptF k a = CoInterrupt
-                      { interruptH :: forall x y. KnotStory k x -> KnotStory k y -> (y, a)
-                      }
-data CoMacguffinF a = CoMacguffin
-                    { macguffinH :: (Desirable, a)
-                    }
 
