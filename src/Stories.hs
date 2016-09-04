@@ -19,7 +19,7 @@ module Stories
 import Control.Monad.Free
 import Control.Comonad.Cofree
 
-data Lazy :: * -> *
+data Placeholder :: * -> *
 
 
 
@@ -78,52 +78,63 @@ infixr 9 :*:
 
 type Knot c a = Knotted c a a
 
+-- Fold a type-level list of functors into a right-associative data-type-a-la-carte.
 type family Knotted (ctr :: (* -> *) -> (* -> *) -> * -> *)
+                    -- ^The constructor for the a-la-cartedness.
                     (all :: [* -> *])
+                    -- ^The entire type-level list.
                     (cont :: [* -> *]) :: * -> *
+                    -- ^The thus-processed type-level list.
 type instance Knotted ctr all (x ': '[]) = Tie all x
 type instance Knotted ctr all (x ': (y ': ys)) = ctr (Tie all x) (Knotted ctr all (y ': ys))
 
-type family Keep (xs :: [* -> *]) where
-    Keep '[] = '[]
-    Keep (x ': xs) = Unject x xs
+-- Filters functors out of recursive calls of the fold.
+type family Filter (xs :: [* -> *]) where
+    Filter '[] = '[]
+    Filter (x ': xs) = Keep x xs
 
+-- Given a list of functors, return the functors in the opposite category.
 type family CoList (all :: [* -> *]) (xs :: [* -> *]) where
     CoList all '[] = '[]
     CoList all (x ': xs) = Co all x ': CoList all xs
 
-
-class IsReg (t :: * -> *) where
+-- Every functor to be used in our Story DSL must have an instance of this class.
+class HasDSL (t :: * -> *) where
+    -- Used to tie the recursive knot. Non-recursive functors should use the
+    -- default implementation.
     type Tie (all :: [* -> *]) t :: * -> *
     type Tie all t = t
 
-    type Unject t (rest :: [* -> *]) :: [* -> *]
-    type Unject k xs = k ': Keep xs
+    -- Used to detemrine whether this functor should be included in recursive
+    -- instances. Non-recursive functors should use the default implementation.
+    type Keep t (rest :: [* -> *]) :: [* -> *]
+    type Keep k xs = k ': Filter xs
 
+    -- Returns the handler for this term.
     type Co (all :: [* -> *]) t :: * -> *
 
 data ChangeF a = Change Character ChangeType (ChangeResult -> a) deriving Functor
-instance IsReg ChangeF where
+instance HasDSL ChangeF where
     type Co all ChangeF = CoChangeF
 
 data InterruptF k a = forall x y. Interrupt (Free k x) (Free k y) (y -> a)
 instance Functor k => Functor (InterruptF k) where
     fmap f (Interrupt x y a) = Interrupt x y (f . a)
-instance IsReg (InterruptF k) where
-    type Tie all (InterruptF k) = InterruptF (Knot Sum (Keep all))
-    type Unject (InterruptF k) rest = rest
-    type Co all (InterruptF k) = CoInterruptF (Keep all)
+instance HasDSL (InterruptF k) where
+    type Tie all (InterruptF k) = InterruptF (Knot Sum (Filter all))
+    type Keep (InterruptF k) rest = rest
+    type Co all (InterruptF k) = CoInterruptF (Filter all)
 
 data MacguffinF a = Macguffin (Desirable -> a) deriving Functor
-instance IsReg MacguffinF where
+instance HasDSL MacguffinF where
     type Co all MacguffinF = CoMacguffinF
 
 
 
 type KnotStory k = Free (Knot Sum k)
 type KnotCoStory k = Cofree (Knot Product (CoList k k))
-type Story = KnotStory '[ChangeF, InterruptF Lazy, MacguffinF]
-type CoStory = KnotCoStory '[ChangeF, InterruptF Lazy, MacguffinF]
+type Story = KnotStory '[ChangeF, InterruptF Placeholder, MacguffinF]
+type CoStory = KnotCoStory '[ChangeF, InterruptF Placeholder, MacguffinF]
 
 change :: (MonadFree f m, ChangeF :<: f) => Character -> ChangeType -> m ChangeResult
 change c ct = liftF . inj $ Change c ct id
