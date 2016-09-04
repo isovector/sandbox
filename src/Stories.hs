@@ -84,39 +84,44 @@ type family Knotted (ctr :: (* -> *) -> (* -> *) -> * -> *)
 type instance Knotted ctr all (x ': '[]) = Tie all x
 type instance Knotted ctr all (x ': (y ': ys)) = ctr (Tie all x) (Knotted ctr all (y ': ys))
 
-type family Tie (all :: [* -> *]) (me :: * -> *) :: * -> *
+type family Keep (xs :: [* -> *]) where
+    Keep '[] = '[]
+    Keep (x ': xs) = Unject x xs
 
-type family Unject (all :: [* -> *]) :: [* -> *]
-type instance Unject '[] = '[]
+type family CoList (all :: [* -> *]) (xs :: [* -> *]) where
+    CoList all '[] = '[]
+    CoList all (x ': xs) = Co all x ': CoList all xs
 
-type family GetCo (all :: [* -> *]) (cont :: [* -> *]) :: [* -> *]
-type instance GetCo all '[] = '[]
 
+class IsReg (t :: * -> *) where
+    type Tie (all :: [* -> *]) t :: * -> *
+    type Tie all t = t
+
+    type Unject t (rest :: [* -> *]) :: [* -> *]
+    type Unject k xs = k ': Keep xs
+
+    type Co (all :: [* -> *]) t :: * -> *
 
 data ChangeF a = Change Character ChangeType (ChangeResult -> a) deriving Functor
-type instance Tie all ChangeF           = ChangeF
-type instance Tie all CoChangeF         = CoChangeF
-type instance Unject (ChangeF ': xs)    = ChangeF ': Unject xs
-type instance GetCo all (ChangeF ': xs) = CoChangeF ': GetCo all xs
+instance IsReg ChangeF where
+    type Co all ChangeF = CoChangeF
 
 data InterruptF k a = forall x y. Interrupt (Free k x) (Free k y) (y -> a)
 instance Functor k => Functor (InterruptF k) where
     fmap f (Interrupt x y a) = Interrupt x y (f . a)
-type instance Tie all (InterruptF k)         = InterruptF (Knotted Sum (Unject all) (Unject all))
-type instance Tie all (CoInterruptF k)       = CoInterruptF (Unject k)
-type instance Unject (InterruptF k ': xs)    = Unject xs
-type instance GetCo all (InterruptF k ': xs) = CoInterruptF all ': GetCo all xs
-
+instance IsReg (InterruptF k) where
+    type Tie all (InterruptF k) = InterruptF (Knot Sum (Keep all))
+    type Unject (InterruptF k) rest = rest
+    type Co all (InterruptF k) = CoInterruptF (Keep all)
 
 data MacguffinF a = Macguffin (Desirable -> a) deriving Functor
-type instance Tie all MacguffinF           = MacguffinF
-type instance Tie all CoMacguffinF         = CoMacguffinF
-type instance Unject (MacguffinF ': xs)    = MacguffinF ': Unject xs
-type instance GetCo all (MacguffinF ': xs) = CoMacguffinF ': GetCo all xs
+instance IsReg MacguffinF where
+    type Co all MacguffinF = CoMacguffinF
+
 
 
 type KnotStory k = Free (Knot Sum k)
-type KnotCoStory k = Cofree (Knot Product (GetCo k k))
+type KnotCoStory k = Cofree (Knot Product (CoList k k))
 type Story = KnotStory '[ChangeF, InterruptF Lazy, MacguffinF]
 type CoStory = KnotCoStory '[ChangeF, InterruptF Lazy, MacguffinF]
 
