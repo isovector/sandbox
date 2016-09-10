@@ -1,7 +1,3 @@
-{-# LANGUAGE TypeInType #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
@@ -9,18 +5,21 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Stories
-     where
+module Stories where
 
-import Data.Kind
+import Data.Kind (Type)
 import Control.Monad.Free
 import Control.Comonad.Cofree
 
@@ -30,9 +29,6 @@ import Data.Singletons.CustomStar
 import Data.Singletons.Prelude
 import Data.Singletons.Prelude.Base
 import Data.Singletons.Prelude.List (Elem)
-
-data Placeholder :: * -> *
-
 
 
 
@@ -95,11 +91,11 @@ $(singletons [d|
 type Knot c a = Knotted c a a
 
 -- Fold a type-level list of functors into a right-associative data-type-a-la-carte.
-type family Knotted (ctr :: (* -> *) -> (* -> *) -> * -> *)
+type family Knotted (ctr :: (Type -> Type) -> (Type -> Type) -> Type -> Type)
                     -- ^The constructor for the a-la-cartedness.
                     (all :: [StoryCmd])
                     -- ^The entire type-level list.
-                    (cont :: [StoryCmd]) :: * -> *
+                    (cont :: [StoryCmd]) :: Type -> Type
                     -- ^The thus-processed type-level list.
 type instance Knotted ctr all (x ': '[]) = Tie all x
 type instance Knotted ctr all (x ': (y ': ys)) = ctr (Tie all x) (Knotted ctr all (y ': ys))
@@ -110,17 +106,17 @@ type family Filter (xs :: [StoryCmd]) :: [StoryCmd] where
     Filter (x ': xs) = Keep x xs
 
 -- Given a list of functors, return the functors in the opposite category.
-type family CoList (all :: [StoryCmd]) (xs :: [StoryCmd]) :: [* -> *] where
+type family CoList (all :: [StoryCmd]) (xs :: [StoryCmd]) :: [Type -> Type] where
     CoList all '[] = '[]
     CoList all (x ': xs) = Co all x ': CoList all xs
 
 -- Every functor to be used in our Story DSL must have an instance of this class.
 class HasDSL (t :: StoryCmd) where
-    type GetCmd t :: * -> *
+    type GetCmd t :: Type -> Type
 
     -- Used to tie the recursive knot. Non-recursive functors should use the
     -- default implementation.
-    type Tie (all :: [StoryCmd]) t :: * -> *
+    type Tie (all :: [StoryCmd]) t :: Type -> Type
     type Tie all t = GetCmd t
 
     -- Used to detemrine whether this functor should be included in recursive
@@ -129,7 +125,7 @@ class HasDSL (t :: StoryCmd) where
     type Keep k xs = k ': Filter xs
 
     -- Returns the handler for this term.
-    type Co (all :: [StoryCmd]) t :: * -> *
+    type Co (all :: [StoryCmd]) t :: Type -> Type
 
 data ChangeF a = Change Character ChangeType (ChangeResult -> a) deriving Functor
 data CoChangeF a = CoChange
@@ -148,7 +144,7 @@ data CoInterruptF k a = CoInterrupt
 instance Functor (CoInterruptF k) where
     fmap f (CoInterrupt g) = CoInterrupt $ (fmap . fmap . fmap) f g
 instance HasDSL InterruptCmd where
-    type GetCmd InterruptCmd = InterruptF Placeholder
+    type GetCmd InterruptCmd = InterruptF Any
     type Tie all InterruptCmd = InterruptF (Knot Sum (Filter all))
     type Keep InterruptCmd rest = rest
     type Co all InterruptCmd = CoInterruptF (Filter all)
@@ -179,12 +175,14 @@ magic = do
 class ToTermLevel k (x :: [k]) where
     toTermLevel :: Proxy x -> [k]
 
-instance SingKind k => ToTermLevel k '[] where
+instance ToTermLevel k '[] where
     toTermLevel _ = []
 
-instance (SingKind k, SingI x, ToTermLevel k xs, Demote x ~ k)
-        => ToTermLevel k ((x :: k) ': (xs :: [k]))
-           where
+instance ( SingKind k
+         , SingI x
+         , ToTermLevel k xs
+         , Demote x ~ k
+         ) => ToTermLevel k ((x :: k) ': (xs :: [k])) where
     toTermLevel _ = fromSing (sing :: Sing x) : toTermLevel (Proxy @xs)
 
 termLevel :: [StoryCmd]
