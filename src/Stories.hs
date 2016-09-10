@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
@@ -18,9 +20,11 @@
 module Stories
      where
 
+import Data.Kind
 import Control.Monad.Free
 import Control.Comonad.Cofree
 
+import Data.Singletons.TH
 import Data.Singletons.TypeLits
 import Data.Singletons.CustomStar
 import Data.Singletons.Prelude
@@ -84,49 +88,56 @@ type f :*: g = Product f g
 infixr 9 :*:
 
 
+$(singletons [d|
+    data StoryCmd = ChangeCmd | InterruptCmd | MacguffinCmd deriving Show
+    |])
+
 type Knot c a = Knotted c a a
 
 -- Fold a type-level list of functors into a right-associative data-type-a-la-carte.
 type family Knotted (ctr :: (* -> *) -> (* -> *) -> * -> *)
                     -- ^The constructor for the a-la-cartedness.
-                    (all :: [* -> *])
+                    (all :: [StoryCmd])
                     -- ^The entire type-level list.
-                    (cont :: [* -> *]) :: * -> *
+                    (cont :: [StoryCmd]) :: * -> *
                     -- ^The thus-processed type-level list.
 type instance Knotted ctr all (x ': '[]) = Tie all x
 type instance Knotted ctr all (x ': (y ': ys)) = ctr (Tie all x) (Knotted ctr all (y ': ys))
 
 -- Filters functors out of recursive calls of the fold.
-type family Filter (xs :: [* -> *]) :: [* -> *] where
+type family Filter (xs :: [StoryCmd]) :: [StoryCmd] where
     Filter '[] = '[]
     Filter (x ': xs) = Keep x xs
 
 -- Given a list of functors, return the functors in the opposite category.
-type family CoList (all :: [* -> *]) (xs :: [* -> *]) :: [* -> *] where
+type family CoList (all :: [StoryCmd]) (xs :: [StoryCmd]) :: [* -> *] where
     CoList all '[] = '[]
     CoList all (x ': xs) = Co all x ': CoList all xs
 
 -- Every functor to be used in our Story DSL must have an instance of this class.
-class HasDSL (t :: * -> *) where
+class HasDSL (t :: StoryCmd) where
+    type GetCmd t :: * -> *
+
     -- Used to tie the recursive knot. Non-recursive functors should use the
     -- default implementation.
-    type Tie (all :: [* -> *]) t :: * -> *
-    type Tie all t = t
+    type Tie (all :: [StoryCmd]) t :: * -> *
+    type Tie all t = GetCmd t
 
     -- Used to detemrine whether this functor should be included in recursive
     -- instances. Non-recursive functors should use the default implementation.
-    type Keep t (rest :: [* -> *]) :: [* -> *]
+    type Keep t (rest :: [StoryCmd]) :: [StoryCmd]
     type Keep k xs = k ': Filter xs
 
     -- Returns the handler for this term.
-    type Co (all :: [* -> *]) t :: * -> *
+    type Co (all :: [StoryCmd]) t :: * -> *
 
 data ChangeF a = Change Character ChangeType (ChangeResult -> a) deriving Functor
 data CoChangeF a = CoChange
                  { changeH :: Character -> ChangeType -> (ChangeResult, a)
                  } deriving Functor
-instance HasDSL ChangeF where
-    type Co all ChangeF = CoChangeF
+instance HasDSL ChangeCmd where
+    type GetCmd ChangeCmd = ChangeF
+    type Co all ChangeCmd = CoChangeF
 
 data InterruptF k a = forall x y. Interrupt (Free k x) (Free k y) (y -> a)
 instance Functor (InterruptF k) where
@@ -136,22 +147,25 @@ data CoInterruptF k a = CoInterrupt
                       }
 instance Functor (CoInterruptF k) where
     fmap f (CoInterrupt g) = CoInterrupt $ (fmap . fmap . fmap) f g
-instance HasDSL (InterruptF k) where
-    type Tie all (InterruptF k) = InterruptF (Knot Sum (Filter all))
-    type Keep (InterruptF k) rest = rest
-    type Co all (InterruptF k) = CoInterruptF (Filter all)
+instance HasDSL InterruptCmd where
+    type GetCmd InterruptCmd = InterruptF Placeholder
+    type Tie all InterruptCmd = InterruptF (Knot Sum (Filter all))
+    type Keep InterruptCmd rest = rest
+    type Co all InterruptCmd = CoInterruptF (Filter all)
 
 data MacguffinF a = Macguffin (Desirable -> a) deriving Functor
 data CoMacguffinF a = CoMacguffin
                     { macguffinH :: (Desirable, a)
                     } deriving Functor
-instance HasDSL MacguffinF where
-    type Co all MacguffinF = CoMacguffinF
+instance HasDSL MacguffinCmd where
+    type GetCmd MacguffinCmd = MacguffinF
+    type Co all MacguffinCmd = CoMacguffinF
 
 type KnotStory k = Free (Knot Sum k)
-type KnotCoStory k = Cofree (Knot Product (CoList k k))
-type Story = KnotStory '[ChangeF, InterruptF Placeholder, MacguffinF]
-type CoStory = KnotCoStory '[ChangeF, InterruptF Placeholder, MacguffinF]
+-- type KnotCoStory k = Cofree (Knot Product (CoList k k))
+type MyCmds = '[ChangeCmd, InterruptCmd, MacguffinCmd]
+type Story = KnotStory MyCmds
+-- type CoStory = KnotCoStory MyCmds
 
 
 change :: (MonadFree f m, ChangeF :<: f) => Character -> ChangeType -> m ChangeResult
@@ -162,12 +176,21 @@ magic = do
     change (Character "") Die
     return ()
 
-proof :: (CoStory ~ Cofree (CoChangeF :*: CoInterruptF '[ChangeF, MacguffinF] :*: CoMacguffinF)) => ()
-proof = ()
+class ToTermLevel k (x :: [k]) where
+    toTermLevel :: Proxy x -> [k]
 
-removeInterrupted :: (Elem (InterruptF Placeholder) ks ~ 'True)
-                  => KnotStory ks a
-                  -> KnotStory (Filter ks) a
-removeInterrupted = undefined
+instance SingKind k => ToTermLevel k '[] where
+    toTermLevel _ = []
+
+instance (SingKind k, SingI x, ToTermLevel k xs, Demote x ~ k)
+        => ToTermLevel k ((x :: k) ': (xs :: [k]))
+           where
+    toTermLevel _ = fromSing (sing :: Sing x) : toTermLevel (Proxy @xs)
+
+termLevel :: [StoryCmd]
+termLevel = toTermLevel $ Proxy @MyCmds
+
+-- proof :: (CoStory ~ Cofree (CoChangeF :*: CoInterruptF '[ChangeF, MacguffinF] :*: CoMacguffinF)) => ()
+-- proof = ()
 
 
