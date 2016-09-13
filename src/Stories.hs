@@ -20,18 +20,20 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Stories where
+module Stories (main) where
 
-import Data.Kind (Type)
-import Control.Monad.Free
 import Control.Comonad.Cofree
+import Control.Monad.Free
+import Data.Kind (Type)
+import Data.Maybe (isJust)
 
-import Data.Singletons.TH
+import Data.Singletons.TH hiding ((:<))
 import Data.Singletons.TypeLits
-import Data.Singletons.CustomStar
-import Data.Singletons.Prelude
+import Data.Singletons.Prelude hiding ((:<))
 import Data.Singletons.Prelude.Base
 import Data.Singletons.Prelude.List (Elem, Filter)
+
+import Test.QuickCheck
 
 
 
@@ -66,22 +68,40 @@ data ChangeType = Introduce
                 deriving (Eq, Show)
 
 
+class Joinable (fs :: [Type -> Type]) where
+    data Joined fs :: Type -> Type
 
-data Sum f g a = InL (f a) | InR (g a) deriving Functor
-type f :+: g = Sum f g
-infixr 8 :+:
+instance Joinable '[] where
+    data Joined '[] a = JNil Void deriving Functor
 
-class (Functor sub, Functor sup) => sub :<: sup where
-  inj :: sub a -> sup a
+instance Joinable (f ': fs) where
+    data Joined (f ': fs) a = Functor f => Here (f a)
+                            | There (Joined fs a)
+deriving instance Functor (Joined fs) => Functor (Joined (f ': fs))
 
-instance Functor f => f :<: f where
-  inj = id
+class Injectable (f :: Type -> Type) (fs :: [Type -> Type]) where
+    inj :: f a -> Joined fs a
 
-instance (Functor f, Functor g) => f :<: (f :+: g) where
-  inj = InL
+instance Functor f => Injectable f (f ': fs) where
+    inj = Here
 
-instance {-# OVERLAPPABLE #-} (Functor f, Functor g, Functor h, f :<: g) => f :<: (h :+: g) where
-  inj = InR . inj
+instance {-# OVERLAPPABLE #-} Injectable f fs => Injectable f (g ': fs) where
+    inj = There . inj
+
+class Outjectable (f :: Type -> Type) (fs :: [Type -> Type]) where
+    outj :: Joined fs a -> Maybe (f a)
+
+instance Outjectable f (f ': fs) where
+    outj (Here f)  = Just f
+    outj (There _) = Nothing
+
+instance {-# OVERLAPPABLE #-} Outjectable f fs => Outjectable f (g ': fs) where
+    outj (There f) = outj f
+    outj (Here _ ) = Nothing
+
+class (Joinable fs, Injectable f fs, Outjectable f fs) => (f :: Type -> Type) :< (fs :: [Type -> Type])
+instance (Joinable fs, Injectable f fs, Outjectable f fs) => (f :< fs)
+
 
 data Product f g a = Product (f a) (g a) deriving Functor
 type f :*: g = Product f g
@@ -158,8 +178,14 @@ instance HasDSL MacguffinCmd where
 
 
 type MyCmds        = '[ChangeCmd, MacguffinCmd]
-type KnotStory   k = Free   (Knot Sum k)
+type KnotStory   k = Free   (Knot Product k) -- FIX
 type KnotCoStory k = Cofree (CoKnot Product k)
 type Story         = KnotStory   MyCmds
 type CoStory       = KnotCoStory MyCmds
+
+
+injOutj_prop :: forall fs f a. (f :< fs) => Proxy fs -> f a -> Bool
+injOutj_prop _ fa = isJust $ (outj (inj fa :: Joined fs a) :: Maybe (f a))
+
+main = quickCheck (injOutj_prop (Proxy @'[[], Proxy, Maybe, (,) Int]) :: Maybe Int -> Bool)
 
