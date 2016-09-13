@@ -99,8 +99,8 @@ instance {-# OVERLAPPABLE #-} Outjectable f fs => Outjectable f (g ': fs) where
     outj (There f) = outj f
     outj (Here _ ) = Nothing
 
-class (Joinable fs, Injectable f fs, Outjectable f fs) => (f :: Type -> Type) :<: (fs :: [Type -> Type])
-instance (Joinable fs, Injectable f fs, Outjectable f fs) => (f :<: fs)
+class (Joinable fs, Injectable f fs, Outjectable f fs, Functor (Joined fs)) => (f :: Type -> Type) :<: (fs :: [Type -> Type])
+instance (Joinable fs, Injectable f fs, Outjectable f fs, Functor (Joined fs)) => (f :<: fs)
 
 
 data Product f g a = Product (f a) (g a) deriving Functor
@@ -115,18 +115,16 @@ $(singletons [d|
                   deriving Show
     |])
 
-type Knot c a = Knotted c a a
-type CoKnot c a = CoKnotted c a a
+class CanMapToFunctorList (cmds :: [StoryCmd]) (all :: [StoryCmd]) where
+    type MapToFunctorList cmds all :: [Type -> Type]
 
--- Fold a type-level list of functors into a right-associative data-type-a-la-carte.
-type family Knotted (ctr :: (Type -> Type) -> (Type -> Type) -> Type -> Type)
-                    -- ^The constructor for the a-la-cartedness.
-                    (all :: [StoryCmd])
-                    -- ^The entire type-level list.
-                    (cont :: [StoryCmd]) :: Type -> Type
-                    -- ^The thus-processed type-level list.
-type instance Knotted ctr all (x ': '[]) = GetCmd x all
-type instance Knotted ctr all (x ': (y ': ys)) = ctr (GetCmd x all) (Knotted ctr all (y ': ys))
+instance CanMapToFunctorList '[] all where
+    type MapToFunctorList '[] all = '[]
+
+instance HasDSL f => CanMapToFunctorList (c ': cs) all where
+    type MapToFunctorList (c ': cs) all = GetCmd c all ': MapToFunctorList cs all
+
+type CoKnot c a = CoKnotted c a a
 
 type family CoKnotted (ctr :: (Type -> Type) -> (Type -> Type) -> Type -> Type)
                       -- ^The constructor for the a-la-cartedness.
@@ -178,10 +176,25 @@ instance HasDSL MacguffinCmd where
 
 
 type MyCmds        = '[ChangeCmd, MacguffinCmd]
-type KnotStory   k = Free   (Knot Product k) -- FIX
+type Functors    k = MapToFunctorList k k
+type JoinedList  k = Joined (Functors k)
+type KnotStory   k = Free   (JoinedList k)
 type KnotCoStory k = Cofree (CoKnot Product k)
 type Story         = KnotStory   MyCmds
 type CoStory       = KnotCoStory MyCmds
+
+change :: forall cmds. (GetCmd ChangeCmd cmds :<: Functors cmds)
+       => Proxy cmds -> Character -> ChangeType -> KnotStory cmds ChangeResult
+change _ c ct = liftF $ inj (Change c ct id :: GetCmd ChangeCmd cmds ChangeResult)
+
+-- TODO(sandy): how can we define this for polymorphic cmds?
+change' :: Character -> ChangeType -> Story ChangeResult
+change' = change (Proxy @MyCmds)
+
+test :: Story ()
+test = do
+    change' (Character "") Die
+    return ()
 
 
 injOutj_prop :: forall fs f a. (f :<: fs) => Proxy fs -> f a -> Bool
