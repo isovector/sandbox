@@ -27,9 +27,9 @@ import Control.Monad.Free
 import Data.Kind (Type)
 import Data.Maybe (isJust)
 
-import Data.Singletons.TH hiding ((:<))
+import Data.Singletons.TH
 import Data.Singletons.TypeLits
-import Data.Singletons.Prelude hiding ((:<))
+import Data.Singletons.Prelude
 import Data.Singletons.Prelude.Base
 import Data.Singletons.Prelude.List (Elem, Filter)
 
@@ -99,8 +99,8 @@ instance {-# OVERLAPPABLE #-} Outjectable f fs => Outjectable f (g ': fs) where
     outj (There f) = outj f
     outj (Here _ ) = Nothing
 
-class (Joinable fs, Injectable f fs, Outjectable f fs) => (f :: Type -> Type) :< (fs :: [Type -> Type])
-instance (Joinable fs, Injectable f fs, Outjectable f fs) => (f :< fs)
+class (Joinable fs, Injectable f fs, Outjectable f fs) => (f :: Type -> Type) :<: (fs :: [Type -> Type])
+instance (Joinable fs, Injectable f fs, Outjectable f fs) => (f :<: fs)
 
 
 data Product f g a = Product (f a) (g a) deriving Functor
@@ -184,7 +184,7 @@ type Story         = KnotStory   MyCmds
 type CoStory       = KnotCoStory MyCmds
 
 
-injOutj_prop :: forall fs f a. (f :< fs) => Proxy fs -> f a -> Bool
+injOutj_prop :: forall fs f a. (f :<: fs) => Proxy fs -> f a -> Bool
 injOutj_prop _ fa = isJust $ (outj (inj fa :: Joined fs a) :: Maybe (f a))
 
 main = quickCheck (injOutj_prop (Proxy @'[[], Proxy, Maybe, (,) Int]) :: Maybe Int -> Bool)
