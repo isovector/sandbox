@@ -5,11 +5,14 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -28,7 +31,8 @@ import Data.Singletons.TypeLits
 import Data.Singletons.CustomStar
 import Data.Singletons.Prelude
 import Data.Singletons.Prelude.Base
-import Data.Singletons.Prelude.List (Elem)
+import Data.Singletons.Prelude.List (Elem, Filter)
+
 
 
 
@@ -36,7 +40,7 @@ data Desirable = Desirable String deriving (Eq, Ord)
 instance Show Desirable where
     show (Desirable name) = name
 
-data Character = Character String deriving (Eq, Ord)
+data Character = Character { characterName :: String } deriving (Eq, Ord)
 instance Show Character where
     show (Character name) = name
 
@@ -85,10 +89,14 @@ infixr 9 :*:
 
 
 $(singletons [d|
-    data StoryCmd = ChangeCmd | InterruptCmd | MacguffinCmd deriving Show
+    data StoryCmd = ChangeCmd
+                  | InterruptCmd
+                  | MacguffinCmd
+                  deriving Show
     |])
 
 type Knot c a = Knotted c a a
+type CoKnot c a = CoKnotted c a a
 
 -- Fold a type-level list of functors into a right-associative data-type-a-la-carte.
 type family Knotted (ctr :: (Type -> Type) -> (Type -> Type) -> Type -> Type)
@@ -97,98 +105,61 @@ type family Knotted (ctr :: (Type -> Type) -> (Type -> Type) -> Type -> Type)
                     -- ^The entire type-level list.
                     (cont :: [StoryCmd]) :: Type -> Type
                     -- ^The thus-processed type-level list.
-type instance Knotted ctr all (x ': '[]) = Tie all x
-type instance Knotted ctr all (x ': (y ': ys)) = ctr (Tie all x) (Knotted ctr all (y ': ys))
+type instance Knotted ctr all (x ': '[]) = GetCmd x all
+type instance Knotted ctr all (x ': (y ': ys)) = ctr (GetCmd x all) (Knotted ctr all (y ': ys))
 
--- Filters functors out of recursive calls of the fold.
-type family Filter (xs :: [StoryCmd]) :: [StoryCmd] where
-    Filter '[] = '[]
-    Filter (x ': xs) = Keep x xs
+type family CoKnotted (ctr :: (Type -> Type) -> (Type -> Type) -> Type -> Type)
+                      -- ^The constructor for the a-la-cartedness.
+                      (all :: [StoryCmd])
+                      -- ^The entire type-level list.
+                      (cont :: [StoryCmd]) :: Type -> Type
+                      -- ^The thus-processed type-level list.
+type instance CoKnotted ctr all (x ': '[]) = CoCmd x all
+type instance CoKnotted ctr all (x ': (y ': ys)) = ctr (CoCmd x all) (CoKnotted ctr all (y ': ys))
 
 -- Given a list of functors, return the functors in the opposite category.
 type family CoList (all :: [StoryCmd]) (xs :: [StoryCmd]) :: [Type -> Type] where
     CoList all '[] = '[]
-    CoList all (x ': xs) = Co all x ': CoList all xs
+    CoList all (x ': xs) = CoCmd x all ': CoList all xs
 
 -- Every functor to be used in our Story DSL must have an instance of this class.
 class HasDSL (t :: StoryCmd) where
-    type GetCmd t :: Type -> Type
+    data GetCmd t (all :: [StoryCmd]) :: Type -> Type
+    data CoCmd  t (all :: [StoryCmd]) :: Type -> Type
 
-    -- Used to tie the recursive knot. Non-recursive functors should use the
-    -- default implementation.
-    type Tie (all :: [StoryCmd]) t :: Type -> Type
-    type Tie all t = GetCmd t
-
-    -- Used to detemrine whether this functor should be included in recursive
-    -- instances. Non-recursive functors should use the default implementation.
-    type Keep t (rest :: [StoryCmd]) :: [StoryCmd]
-    type Keep k xs = k ': Filter xs
-
-    -- Returns the handler for this term.
-    type Co (all :: [StoryCmd]) t :: Type -> Type
-
-data ChangeF a = Change Character ChangeType (ChangeResult -> a) deriving Functor
-data CoChangeF a = CoChange
-                 { changeH :: Character -> ChangeType -> (ChangeResult, a)
-                 } deriving Functor
 instance HasDSL ChangeCmd where
-    type GetCmd ChangeCmd = ChangeF
-    type Co all ChangeCmd = CoChangeF
+    data GetCmd ChangeCmd all a = Change Character ChangeType (ChangeResult -> a) deriving Functor
+    data CoCmd  ChangeCmd all a = CoChange
+                                { changeH :: Character -> ChangeType -> (ChangeResult, a)
+                                } deriving Functor
 
-data InterruptF k a = forall x y. Interrupt (Free k x) (Free k y) (y -> a)
-instance Functor (InterruptF k) where
-    fmap f (Interrupt x y a) = Interrupt x y (f . a)
-data CoInterruptF k a = CoInterrupt
-                      { interruptH :: forall x y. KnotStory k x -> KnotStory k y -> (y, a)
-                      }
-instance Functor (CoInterruptF k) where
-    fmap f (CoInterrupt g) = CoInterrupt $ (fmap . fmap . fmap) f g
+
 instance HasDSL InterruptCmd where
-    type GetCmd InterruptCmd = InterruptF Any
-    type Tie all InterruptCmd = InterruptF (Knot Sum (Filter all))
-    type Keep InterruptCmd rest = rest
-    type Co all InterruptCmd = CoInterruptF (Filter all)
+    data GetCmd InterruptCmd all a where
+        Interrupt :: KnotStory (Filter ((:/=$) @@ 'InterruptCmd) all) x
+                  -> KnotStory (Filter ((:/=$) @@ 'InterruptCmd) all) y
+                  -> (y -> a)
+                  -> GetCmd InterruptCmd all a
+    data CoCmd  InterruptCmd all a where
+        CoInterrupt :: { interruptH :: KnotStory (Filter ((:/=$) @@ 'InterruptCmd) all) x
+                                    -> KnotStory (Filter ((:/=$) @@ 'InterruptCmd) all) y
+                                    -> (y, a)
+                       } -> CoCmd InterruptCmd all a
+deriving instance Functor (GetCmd InterruptCmd k)
+deriving instance Functor (CoCmd  InterruptCmd k)
 
-data MacguffinF a = Macguffin (Desirable -> a) deriving Functor
-data CoMacguffinF a = CoMacguffin
-                    { macguffinH :: (Desirable, a)
-                    } deriving Functor
+
 instance HasDSL MacguffinCmd where
-    type GetCmd MacguffinCmd = MacguffinF
-    type Co all MacguffinCmd = CoMacguffinF
-
-type KnotStory k = Free (Knot Sum k)
--- type KnotCoStory k = Cofree (Knot Product (CoList k k))
-type MyCmds = '[ChangeCmd, InterruptCmd, MacguffinCmd]
-type Story = KnotStory MyCmds
--- type CoStory = KnotCoStory MyCmds
+    data GetCmd MacguffinCmd all a = Macguffin (Desirable -> a) deriving Functor
+    data CoCmd  MacguffinCmd all a = CoMacguffin
+                                   { macguffinH :: (Desirable, a)
+                                   } deriving Functor
 
 
-change :: (MonadFree f m, ChangeF :<: f) => Character -> ChangeType -> m ChangeResult
-change c ct = liftF . inj $ Change c ct id
 
-magic :: Story ()
-magic = do
-    change (Character "") Die
-    return ()
-
-class ToTermLevel k (x :: [k]) where
-    toTermLevel :: Proxy x -> [k]
-
-instance ToTermLevel k '[] where
-    toTermLevel _ = []
-
-instance ( SingKind k
-         , SingI x
-         , ToTermLevel k xs
-         , Demote x ~ k
-         ) => ToTermLevel k ((x :: k) ': (xs :: [k])) where
-    toTermLevel _ = fromSing (sing :: Sing x) : toTermLevel (Proxy @xs)
-
-termLevel :: [StoryCmd]
-termLevel = toTermLevel $ Proxy @MyCmds
-
--- proof :: (CoStory ~ Cofree (CoChangeF :*: CoInterruptF '[ChangeF, MacguffinF] :*: CoMacguffinF)) => ()
--- proof = ()
-
+type MyCmds        = '[ChangeCmd, MacguffinCmd]
+type KnotStory   k = Free   (Knot Sum k)
+type KnotCoStory k = Cofree (CoKnot Product k)
+type Story         = KnotStory   MyCmds
+type CoStory       = KnotCoStory MyCmds
 
