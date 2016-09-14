@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -112,7 +113,7 @@ $(singletons [d|
     data StoryCmd = ChangeCmd
                   | InterruptCmd
                   | MacguffinCmd
-                  deriving Show
+                  deriving (Show, Eq, Ord)
     |])
 
 class CanMapToFunctorList (cmds :: [StoryCmd]) (all :: [StoryCmd]) where
@@ -175,25 +176,26 @@ instance HasDSL MacguffinCmd where
 
 
 
-type MyCmds        = '[ChangeCmd, MacguffinCmd]
-type Functors    k = MapToFunctorList k k
-type JoinedList  k = Joined (Functors k)
-type KnotStory   k = Free   (JoinedList k)
+type MyCmds           = '[ChangeCmd]
+type Functors     k   = MapToFunctorList k k
+type JoinedList   k   = Joined (Functors k)
+newtype KnotStory k a = Story (Free (JoinedList k) a)
+
+deriving instance Functor (JoinedList k) => Functor (KnotStory k)
+deriving instance Functor (JoinedList k) => Applicative (KnotStory k)
+deriving instance Functor (JoinedList k) => Monad (KnotStory k)
+
 type KnotCoStory k = Cofree (CoKnot Product k)
 type Story         = KnotStory   MyCmds
 type CoStory       = KnotCoStory MyCmds
 
-change :: forall cmds. (GetCmd ChangeCmd cmds :<: Functors cmds)
-       => Proxy cmds -> Character -> ChangeType -> KnotStory cmds ChangeResult
-change _ c ct = liftF $ inj (Change c ct id :: GetCmd ChangeCmd cmds ChangeResult)
-
--- TODO(sandy): how can we define this for polymorphic cmds?
-change' :: Character -> ChangeType -> Story ChangeResult
-change' = change (Proxy @MyCmds)
+change :: forall cmds. (Elem 'ChangeCmd cmds ~ 'True, GetCmd 'ChangeCmd cmds :<: Functors cmds)
+       => Character -> ChangeType -> KnotStory cmds ChangeResult
+change c ct = Story . liftF $ inj (Change c ct id :: GetCmd ChangeCmd cmds ChangeResult)
 
 test :: Story ()
 test = do
-    change' (Character "") Die
+    change (Character "") Die
     return ()
 
 
