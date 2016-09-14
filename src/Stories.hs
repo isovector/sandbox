@@ -176,10 +176,11 @@ instance HasDSL MacguffinCmd where
 
 
 
-type MyCmds           = '[ChangeCmd]
+type MyCmds           = '[ChangeCmd, InterruptCmd, MacguffinCmd]
 type Functors     k   = MapToFunctorList k k
 type JoinedList   k   = Joined (Functors k)
 newtype KnotStory k a = Story (Free (JoinedList k) a)
+type cmd :<+: cmds    = GetCmd cmd cmds :<: Functors cmds
 
 deriving instance Functor (JoinedList k) => Functor (KnotStory k)
 deriving instance Functor (JoinedList k) => Applicative (KnotStory k)
@@ -189,14 +190,26 @@ type KnotCoStory k = Cofree (CoKnot Product k)
 type Story         = KnotStory   MyCmds
 type CoStory       = KnotCoStory MyCmds
 
-change :: forall cmds. (Elem 'ChangeCmd cmds ~ 'True, GetCmd 'ChangeCmd cmds :<: Functors cmds)
+change :: forall cmds. (ChangeCmd :<+: cmds)
        => Character -> ChangeType -> KnotStory cmds ChangeResult
 change c ct = Story . liftF $ inj (Change c ct id :: GetCmd ChangeCmd cmds ChangeResult)
 
-test :: Story ()
+interrupt :: forall cmds x y. (InterruptCmd :<+: cmds)
+       => KnotStory (Filter ((:/=$) @@ 'InterruptCmd) cmds) x
+       -> KnotStory (Filter ((:/=$) @@ 'InterruptCmd) cmds) y
+       -> KnotStory cmds y
+interrupt x y = Story . liftF $ inj (Interrupt x y id :: GetCmd InterruptCmd cmds y)
+
+macguffin :: forall cmds. (MacguffinCmd :<+: cmds)
+       => KnotStory cmds Desirable
+macguffin = Story . liftF $ inj (Macguffin id :: GetCmd MacguffinCmd cmds Desirable)
+
+test :: Story Bool
 test = do
     change (Character "") Die
-    return ()
+    x <- macguffin
+    y <- interrupt (return ()) macguffin
+    return $ x == y
 
 
 injOutj_prop :: forall fs f a. (f :<: fs) => Proxy fs -> f a -> Bool
