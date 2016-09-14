@@ -68,7 +68,6 @@ data ChangeType = Introduce
                 | Feel Character Opinion
                 deriving (Eq, Show)
 
-
 class Summable (fs :: [Type -> Type]) where
     data Summed fs :: Type -> Type
 
@@ -76,38 +75,30 @@ instance Summable '[] where
     data Summed '[] a = SummedNil Void deriving Functor
 
 instance Summable (f ': fs) where
-    data Summed (f ': fs) a = Functor f => Here (f a)
-                            | Elsewhere (Summed fs a)
+    data Summed (f ': fs) a = Functor f => Here !(f a)
+                            | There !(Summed fs a)
 deriving instance Functor (Summed fs) => Functor (Summed (f ': fs))
 
 class Injectable (f :: Type -> Type) (fs :: [Type -> Type]) where
     inj :: f a -> Summed fs a
+    outj :: Summed fs a -> Maybe (f a)
 
 instance Functor f => Injectable f (f ': fs) where
     inj = Here
+    outj (Here f)  = Just f
+    outj (There _) = Nothing
 
 instance {-# OVERLAPPABLE #-} Injectable f fs => Injectable f (g ': fs) where
-    inj = Elsewhere . inj
-
-class Outjectable (f :: Type -> Type) (fs :: [Type -> Type]) where
-    outj :: Summed fs a -> Maybe (f a)
-
-instance Outjectable f (f ': fs) where
-    outj (Here f)      = Just f
-    outj (Elsewhere _) = Nothing
-
-instance {-# OVERLAPPABLE #-} Outjectable f fs => Outjectable f (g ': fs) where
-    outj (Here _ )     = Nothing
-    outj (Elsewhere f) = outj f
+    inj = There . inj
+    outj (Here _ ) = Nothing
+    outj (There f) = outj f
 
 class ( Summable fs
       , Injectable f fs
-      , Outjectable f fs
       , Functor (Summed fs)
       ) => (f :: Type -> Type) :<: (fs :: [Type -> Type])
 instance ( Summable fs
          , Injectable f fs
-         , Outjectable f fs
          , Functor (Summed fs)
          ) => (f :<: fs)
 
