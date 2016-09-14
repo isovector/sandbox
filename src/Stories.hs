@@ -69,39 +69,47 @@ data ChangeType = Introduce
                 deriving (Eq, Show)
 
 
-class Joinable (fs :: [Type -> Type]) where
-    data Joined fs :: Type -> Type
+class Summable (fs :: [Type -> Type]) where
+    data Summed fs :: Type -> Type
 
-instance Joinable '[] where
-    data Joined '[] a = JNil Void deriving Functor
+instance Summable '[] where
+    data Summed '[] a = SummedNil Void deriving Functor
 
-instance Joinable (f ': fs) where
-    data Joined (f ': fs) a = Functor f => Here (f a)
-                            | There (Joined fs a)
-deriving instance Functor (Joined fs) => Functor (Joined (f ': fs))
+instance Summable (f ': fs) where
+    data Summed (f ': fs) a = Functor f => Here (f a)
+                            | Elsewhere (Summed fs a)
+deriving instance Functor (Summed fs) => Functor (Summed (f ': fs))
 
 class Injectable (f :: Type -> Type) (fs :: [Type -> Type]) where
-    inj :: f a -> Joined fs a
+    inj :: f a -> Summed fs a
 
 instance Functor f => Injectable f (f ': fs) where
     inj = Here
 
 instance {-# OVERLAPPABLE #-} Injectable f fs => Injectable f (g ': fs) where
-    inj = There . inj
+    inj = Elsewhere . inj
 
 class Outjectable (f :: Type -> Type) (fs :: [Type -> Type]) where
-    outj :: Joined fs a -> Maybe (f a)
+    outj :: Summed fs a -> Maybe (f a)
 
 instance Outjectable f (f ': fs) where
-    outj (Here f)  = Just f
-    outj (There _) = Nothing
+    outj (Here f)      = Just f
+    outj (Elsewhere _) = Nothing
 
 instance {-# OVERLAPPABLE #-} Outjectable f fs => Outjectable f (g ': fs) where
-    outj (There f) = outj f
-    outj (Here _ ) = Nothing
+    outj (Here _ )     = Nothing
+    outj (Elsewhere f) = outj f
 
-class (Joinable fs, Injectable f fs, Outjectable f fs, Functor (Joined fs)) => (f :: Type -> Type) :<: (fs :: [Type -> Type])
-instance (Joinable fs, Injectable f fs, Outjectable f fs, Functor (Joined fs)) => (f :<: fs)
+class ( Summable fs
+      , Injectable f fs
+      , Outjectable f fs
+      , Functor (Summed fs)
+      ) => (f :: Type -> Type) :<: (fs :: [Type -> Type])
+instance ( Summable fs
+         , Injectable f fs
+         , Outjectable f fs
+         , Functor (Summed fs)
+         ) => (f :<: fs)
 
 
 data Product f g a = Product (f a) (g a) deriving Functor
@@ -178,7 +186,7 @@ instance HasDSL MacguffinCmd where
 
 type MyCmds           = '[ChangeCmd, InterruptCmd, MacguffinCmd]
 type Functors     k   = MapToFunctorList k k
-type JoinedList   k   = Joined (Functors k)
+type JoinedList   k   = Summed (Functors k)
 newtype KnotStory k a = Story (Free (JoinedList k) a)
 type cmd :<+: cmds    = GetCmd cmd cmds :<: Functors cmds
 
@@ -213,7 +221,7 @@ test = do
 
 
 injOutj_prop :: forall fs f a. (f :<: fs) => Proxy fs -> f a -> Bool
-injOutj_prop _ fa = isJust $ (outj (inj fa :: Joined fs a) :: Maybe (f a))
+injOutj_prop _ fa = isJust $ (outj (inj fa :: Summed fs a) :: Maybe (f a))
 
 main = quickCheck (injOutj_prop (Proxy @'[[], Proxy, Maybe, (,) Int]) :: Maybe Int -> Bool)
 
