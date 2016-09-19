@@ -1,6 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -10,6 +13,39 @@
 module Idiom where
 
 import Data.Proxy
+
+data Nat = Zero | Succ Nat
+
+data NumArgs :: Nat -> * -> * where
+    NAZero :: NumArgs Zero a
+    NASucc :: NumArgs n b -> NumArgs (Succ n) (a -> b)
+
+type family Listify (n :: Nat) arrows where
+    Listify Zero t = [t]
+    Listify (Succ n) (a -> b) = [a] -> Listify n b
+
+listApply :: NumArgs n a -> [a] -> Listify n a
+listApply NAZero fs = fs
+listApply (NASucc na) fs = \args -> listApply na (apply fs args)
+  where
+    apply :: [a -> b] -> [a] -> [b]
+    apply (f : fs) (x : xs) = f x : apply fs xs
+    apply _ _ = []
+
+type family CountArgs (f :: *) :: Nat where
+    CountArgs (a -> b) = Succ (CountArgs b)
+    CountArgs t        = Zero
+
+class CNumArgs (numArgs :: Nat) (arrows :: *) where
+    getNA :: NumArgs numArgs arrows
+instance CNumArgs Zero a where
+    getNA = NAZero
+instance CNumArgs n b => CNumArgs (Succ n) (a -> b) where
+    getNA = NASucc getNA
+
+zipWith' :: forall f. CNumArgs (CountArgs f) f => f -> Listify (CountArgs f) f
+zipWith' func = listApply (getNA :: NumArgs (CountArgs f) f) (repeat func)
+
 
 class HasFnOfArity (ts :: [*]) where
     type FnOfArity                ts :: *
