@@ -20,12 +20,13 @@
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Stories (main) where
 
 import Control.Comonad.Cofree
 import Control.Monad.Free
-import Data.Kind (Type)
+import Data.Kind (Constraint, Type)
 import Data.Maybe (isJust)
 
 import Data.Singletons.TH
@@ -34,8 +35,16 @@ import Data.Singletons.Prelude
 import Data.Singletons.Prelude.Base
 import Data.Singletons.Prelude.List (Elem, Filter)
 
+-- TODO(sandy): remove this when you figure out how to write proofs
+import Unsafe.Coerce
+
 import Test.QuickCheck
 
+
+type family (<=>) (c :: k -> Constraint) (as :: [k]) where
+    (<=>) c '[k] = c k
+    (<=>) c (h ': t) = (c h, (<=>) c t)
+infixl 9 <=>
 
 
 
@@ -144,12 +153,22 @@ type family CoList (all :: [StoryCmd]) (xs :: [StoryCmd]) :: [Type -> Type] wher
 class HasDSL (t :: StoryCmd) where
     data GetCmd t (all :: [StoryCmd]) :: Type -> Type
     data CoCmd  t (all :: [StoryCmd]) :: Type -> Type
+    refined :: ( t :<+: cmds
+               , t :<+: (Filter ((:/=$) @@ cmd) cmds)
+               , (t :== cmd) ~ 'False
+               )
+            => SStoryCmd cmd
+            -> (forall cmds a. GetCmd cmd cmds a -> KnotStory (Filter ((:/=$) @@ cmd) cmds) a)
+            -> GetCmd t cmds a
+            -> GetCmd t (Filter ((:/=$) @@ cmd) cmds) a
+
 
 instance HasDSL ChangeCmd where
     data GetCmd ChangeCmd all a = Change Character ChangeType (ChangeResult -> a) deriving Functor
     data CoCmd  ChangeCmd all a = CoChange
                                 { changeH :: Character -> ChangeType -> (ChangeResult, a)
                                 } deriving Functor
+    refined _ _ (Change c ct x) = Change c ct x
 
 
 instance HasDSL InterruptCmd where
@@ -163,6 +182,8 @@ instance HasDSL InterruptCmd where
                                     -> KnotStory (Filter ((:/=$) @@ 'InterruptCmd) all) y
                                     -> (y, a)
                        } -> CoCmd InterruptCmd all a
+    -- TODO(sandy): remove the `unsafeCoerce` when you figure out how
+    refined s alg (Interrupt a b x) = undefined
 deriving instance Functor (GetCmd InterruptCmd k)
 deriving instance Functor (CoCmd  InterruptCmd k)
 
@@ -172,8 +193,21 @@ instance HasDSL MacguffinCmd where
     data CoCmd  MacguffinCmd all a = CoMacguffin
                                    { macguffinH :: (Desirable, a)
                                    } deriving Functor
+    refined _ _ (Macguffin x) = Macguffin x
 
 
+refine :: forall cmd cmds b.
+          (cmd :<+: cmds, Functor (JoinedList cmds))
+       => SStoryCmd cmd
+       -> (forall cmds a. GetCmd cmd cmds a -> KnotStory (Filter ((:/=$) @@ cmd) cmds) a)
+       -> KnotStory cmds b
+       -> KnotStory (Filter ((:/=$) @@ cmd) cmds) b
+refine s _   (Story (Pure x)) = Story $ Pure $ undefined
+refine s alg (Story (Free x)) = Story $ Free $ go x
+  where
+    outj' = outj :: Summed (Functors cmds) c -> Maybe (GetCmd cmd cmds c)
+    go (outj' -> Just (fa)) = undefined -- removing fa
+    go other                = undefined -- keeping other
 
 type MyCmds           = '[ChangeCmd, InterruptCmd, MacguffinCmd]
 type Functors     k   = MapToFunctorList k k

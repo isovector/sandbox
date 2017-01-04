@@ -4,6 +4,7 @@ module Main where
 import Control.Monad.State (get, runState, modify)
 import qualified Data.Foldable as F
 
+import Idiom
 import qualified Stories as Stories
 
 loeb :: Traversable t
@@ -18,4 +19,4 @@ loeb ta = fst
             return $ \ta' ->
                 F.toList ta' !! here
 
-main = Stories.main
+main = putStrLn $ show test
