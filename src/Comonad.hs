@@ -1,73 +1,58 @@
-{-# LANGUAGE QuasiQuotes      #-}
-{-# LANGUAGE TemplateHaskell  #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 module Comonad where
 
-import ArbitraryInstances
-import Data.Monoid ((<>))
-import Laws
+import Data.Function
+import Data.Semigroup
 import Control.Comonad
-import Test.QuickCheck
-import Test.QuickCheck.Function
-import Language.Haskell.Codo
+import Control.Comonad.Store
+import Debug.Trace
 
+data Stream a = a :| Stream a deriving Functor
 
-instance (Arbitrary s, CoArbitrary s, Arbitrary a) => Arbitrary (Store s a) where
-  arbitrary = Store <$> arbitrary <*> arbitrary
+instance Comonad Stream where
+  extract (a :| _) = a
+  duplicate a@(_ :| as) = a :| duplicate as
 
+data Zipper a = Zipper (Stream a) a (Stream a) deriving Functor
 
-data Store s a = Store (s -> a) s
-  deriving (Eq, Show)
+moveL :: Zipper a -> Zipper a
+moveL (Zipper (l :| ls) a rs) = Zipper ls l $ a :| rs
 
-instance Functor (Store s) where
-  fmap f (Store s ix) = Store (f . s) ix
+moveR :: Zipper a -> Zipper a
+moveR (Zipper ls a (r :| rs)) = Zipper (a :| ls) r rs
 
-instance Comonad (Store s) where
-  extract (Store s ix) = s ix
-  extend f w@(Store s ix) = Store (\sb -> f $ seek sb w) ix
+instance Comonad Zipper where
+  extract (Zipper _ a _) = a
+  duplicate = zipperf moveL moveR
 
-instance Monoid s => Applicative (Store s) where
-  pure a = Store (const a) mempty
-  Store fs fix <*> Store as aix = Store (fs <*> as) (fix <> aix)
+coiter :: (a -> a) -> a -> Stream a
+coiter f a = f a :| coiter f (f a)
 
+instance ComonadApply Stream where
+  (f :| fs) <@> (a :| as) = f a :| (fs <@> as)
 
-seek :: s -> Store s a -> Store s a
-seek ix (Store s _) = Store s ix
+instance ComonadApply Zipper where
+  Zipper lf f rf <@> Zipper la a ra = Zipper (lf <@> la) (f a) (rf <@> ra)
 
-peek :: s -> Store s a -> a
-peek ix (Store s _) = s ix
+zipperf :: (a -> a) -> (a -> a) -> a -> Zipper a
+zipperf lf rf a = Zipper (coiter lf a) a (coiter rf a)
 
-pos :: Store s a -> s
-pos (Store _ ix) = ix
+zipper :: a -> a -> a -> Zipper a
+zipper l a r = Zipper (coiter id l) a (coiter id r)
 
+stolist :: Stream a -> [a]
+stolist (a :| as) = a : stolist as
 
-data Env e a = Env e a
-  deriving (Eq, Show)
+tolist :: Zipper a -> [a]
+tolist (Zipper _ a as) = stolist $ a :| as
 
-instance Functor (Env e) where
-  fmap f (Env e a) = Env e $ f a
+wat :: Zipper (Zipper Integer -> Integer)
+wat = zipperf (const $ const 1) (\f w -> extract (moveL w) + extract (moveL $ moveL w)) (const 1)
 
-instance Comonad (Env e) where
-  extract (Env _ a) = a
-  duplicate w@(Env e a) = Env e w
+evaluate :: (ComonadApply w) => w (w a -> a) -> w a
+evaluate fs = fix $ (fs <@>) . duplicate
 
-instance (Monoid e) => Applicative (Env e) where
-  pure = Env mempty
-  Env fe fa <*> Env e a = Env (fe <> e) (fa a)
-
-ask :: Env e a -> e
-ask (Env e _) = e
-
-adder :: Store Int Int -> Int
-adder = [codo| w =>
-        let p = pos w
-        peek (p - 1) w + peek (p + 1) w + extract w
-  |]
-
-test :: Store Int Int -> Store Int Int
-test = [codo| x =>
-       w <- adder x
-       w
-  |]
+main :: IO ()
+main = print . take 10 . tolist $ evaluate wat
 
