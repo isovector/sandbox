@@ -3,5 +3,6 @@ packages:
 - '.'
 extra-deps:
   - codo-notation-0.5.2
+  - nondeterminism-1.4
 flags: {}
 extra-package-dbs: []
