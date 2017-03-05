@@ -32,14 +32,14 @@ vacuous = fmap absurd
 eliminate :: DoubleNot a -> a
 eliminate = undefined
   where
-    p1 :: a -> b -> a
-    p1 = const
+    hilbert1 :: a -> b -> a
+    hilbert1 = const
 
-    p2 :: (a -> b -> c) -> (a -> b) -> (a -> c)
-    p2 = ap
+    hilbert2 :: (a -> b -> c) -> (a -> b) -> (a -> c)
+    hilbert2 = ap
 
-    p3 :: (Not b -> Not a) -> (Not b -> a) -> b
-    p3 nbna nba = error "cannot possibly be constructive"
+    hilbert3 :: (Not b -> Not a) -> (Not b -> a) -> b
+    hilbert3 nbna nba = error "cannot possibly be constructive"
 
 type Not a = a -> Void
 
