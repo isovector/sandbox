@@ -9,39 +9,46 @@
 
 module Freer where
 
-import Data.Constraint
 import Control.Monad.Freer
 import Control.Monad.Freer.Internal
-import Data.Open.Union
-import Data.Open.Union.Internal
-import Control.Monad.Freer.Writer
 import Control.Monad.Freer.State
-import Unsafe.Coerce
+import Control.Monad.Freer.Writer
+import Data.Constraint
 import Data.FTCQueue
+import Data.Open.Union.Internal
+import Unsafe.Coerce
 
 inTermsOf :: forall s r x. (Member s r => x) -> x
-inTermsOf wat = case unsafeCoerce (Dict :: Dict (Show ())) :: Dict (Member s r) of
-                  Dict -> wat
+inTermsOf wat =
+  case unsafeCoerce (Dict :: Dict (Show ())) :: Dict (Member s r) of
+    Dict -> wat
 
-raise :: (r ~ (Head r ': Tail r)) => Eff r a -> Eff (s ': r) a
+raise :: (r ~ (Head r ': Tail r))
+      => Eff r a
+      -> Eff (s ': r) a
 raise (Val a) = Val a
 raise (E u ftc) = E (weaken u) $ raiseFTC ftc
 
-raiseFTC :: (r ~ (Head r ': Tail r)) => FTCQueue (Eff r) a b -> FTCQueue (Eff (s ': r)) a b
+raiseFTC :: (r ~ (Head r ': Tail r))
+         => FTCQueue (Eff r) a b
+         -> FTCQueue (Eff (s ': r)) a b
 raiseFTC (Leaf f) = Leaf $ fmap raise f
 raiseFTC (Node a b) = Node (raiseFTC a) (raiseFTC b)
 
 countWrites :: forall r a. Member IO r
             => Eff (Writer () ': r) a
             -> Eff r a
-countWrites prog = fmap fst
-                 . flip runState (0 :: Int)
-                 . raise
-                 $ handleRelay pure
-                               (inTermsOf @(State Int) @r bind)
-                               prog
+countWrites = fmap fst
+            . flip runState (0 :: Int)
+            . raise
+            . handleRelay pure
+                          (inTermsOf @(State Int) @r bind)
   where
-    bind :: forall x. (Member (State Int) r) => Writer () x -> (x -> Eff r a) -> Eff r a
+    bind :: forall x
+          . (Member (State Int) r)
+         => Writer () x
+         -> (x -> Eff r a)
+         -> Eff r a
     bind (Writer _) arr = do
       x :: Int <- get
       send $ print x
