@@ -1,6 +1,7 @@
 resolver: lts-7.1
 packages:
 - '.'
+- '../free-est'
 extra-deps:
   - codo-notation-0.5.2
   - nondeterminism-1.4
