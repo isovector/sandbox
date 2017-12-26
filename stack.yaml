@@ -1,9 +1,9 @@
-resolver: lts-7.1
+resolver: lts-9.3
 packages:
 - '.'
-extra-deps:
-  - codo-notation-0.5.2
-  - nondeterminism-1.4
-  - freer-effects-0.3.0.0
+extra-deps: []
+  # - codo-notation-0.5.2
+  # - nondeterminism-1.4
+  # - freer-effects-0.3.0.0
 flags: {}
 extra-package-dbs: []
